@@ -1,4 +1,4 @@
-const { song, musicgenre, Sequelize } = require('../models')
+const { song, musicgenre, file, Sequelize } = require('../models')
 const {Op} = require ('sequelize');
 
 let self = {}
@@ -17,8 +17,6 @@ self.getAll = async function (req, res) {
         };
     }
     try {
-        
-
         let data = await song.findAll({
             where: filters,
             attributes: [['id', 'songid'], 'title', 'artist', 'album', 'duration', 'fileid'],
@@ -40,6 +38,9 @@ self.getAll = async function (req, res) {
 self.get = async function (req, res) {
     try {
         let id = req.params.id
+        if (!id || isNaN(id) || !Number.isInteger(Number(id))) {
+            return res.status(400).json({ error: 'ID inválido.' });
+        }
         let data = await song.findByPk(id, {
             attributes: [['id', 'songid'], 'title', 'artist', 'album', 'duration', 'fileid'],
             include: {
@@ -61,34 +62,72 @@ self.get = async function (req, res) {
 // POST: api/song
 self.create = async function (req, res) {
     try {
+        const { title, artist, album, duration, fileid } = req.body;
+        if (!title || !artist || !album || title.length > 75 || artist.length > 75 || album.length > 75) {
+            return res.status(400).json({ mensaje: 'Los campos no son validos.' });
+        }
+
+        let fileId = null;
+        if (fileid) {
+            if (!(/^\d+$/.test(fileid))) {
+                fileId = null;
+            } else {
+                const fileExists = await file.findByPk(fileid);
+                fileId = fileExists ? fileid : null;
+            }
+        }
+
+        const durationRegex = /^\d{2}:\d{2}:\d{2}$/;
+        const isValidDuration = durationRegex.test(duration);
+        const finalDuration = isValidDuration ? duration : '00:00:00';
+
         let data = await song.create({
-            title: req.body.title,
-            artist: req.body.artist,
-            album: req.body.album,
-            duration: req.body.duration || '00:00:00',
-            fileid: req.body.fileid || null
-        })
-        req.logbook("song.crear", data.id)
-        return res.status(201).json(data)
+            title: title,
+            artist: artist,
+            album: album,
+            duration: finalDuration,
+            fileid: fileId
+        });
+
+        req.logbook("song.crear", data.id);
+        return res.status(201).json(data);
     } catch (error) {
-        return res.status(500).json(error)
+        return res.status(500).json(error);
     }
 }
-
-
 
 self.update = async function (req, res) {
     try {
         let id = req.params.id;
-        let { title, artist, album, duration } = req.body;
+        if (!id || isNaN(id) || !Number.isInteger(Number(id))) {
+            return res.status(400).json({ error: 'ID inválido.' });
+        }
+        let { title, artist, album, duration, fileid } = req.body;
+        if (!title || !artist || !album || title.length > 75 || artist.length > 75 || album.length > 75) {
+            return res.status(400).json({ mensaje: 'Los campos no son validos.' });
+        }
+
+        const durationRegex = /^\d{2}:\d{2}:\d{2}$/;
+        const isValidDuration = durationRegex.test(duration);
+        const finalDuration = isValidDuration ? duration : '00:00:00';
+
+        let fileId = null;
+        if (fileid) {
+            if (!(/^\d+$/.test(fileid))) {
+                fileId = null;
+            } else {
+                const fileExists = await file.findByPk(fileid);
+                fileId = fileExists ? fileid : null;
+            }
+        }
 
         let updateFields = {};
         if (title !== undefined) updateFields.title = title;
         if (artist !== undefined) updateFields.artist = artist;
         if (album !== undefined) updateFields.album = album;
-        if (duration !== undefined) updateFields.duration = duration;
+        if (finalDuration !== undefined) updateFields.duration = finalDuration;
+        if (fileId !== undefined) updateFields.fileid = fileId;
 
-        
         if (Object.keys(updateFields).length === 0) {
             return res.status(400).json({ message: "No fields to update" });
         }
@@ -106,10 +145,12 @@ self.update = async function (req, res) {
     }
 }
 
-
 self.patch = async function (req, res) {
     try {
         let id = req.params.id
+        if (!id || isNaN(id) || !Number.isInteger(Number(id))) {
+            return res.status(400).json({ error: 'ID inválido.' });
+        }
         let body = req.body
         let data = await song.update(body, { where: { id: id } })
         if (data[0] === 0)
@@ -126,6 +167,9 @@ self.patch = async function (req, res) {
 self.delete = async function (req, res) {
     try {
         let id = req.params.id
+        if (!id || isNaN(id) || !Number.isInteger(Number(id))) {
+            return res.status(400).json({ error: 'ID inválido.' });
+        }
         let data = await song.findByPk(id)
         if (!data)
             return res.status(404).send()
@@ -141,37 +185,54 @@ self.delete = async function (req, res) {
     }
 }
 
-// POST: api/song/5/musicgenre/1
+// POST: api/song/:id/musicgenre/:musicgenreid
 self.assignMusicgenre = async function (req, res) {
     try {
-        let itemToAssign = await musicgenre.findByPk(req.body.musicgenreid);
-        if (!itemToAssign) return res.status(404).send()
+        const { id } = req.params;
+        const { musicgenreid } = req.body;
 
-        let item = await song.findByPk(req.params.id);
-        if (!item) return res.status(404).send()
+        if (!id || isNaN(id) || !Number.isInteger(Number(id))) {
+            return res.status(400).json({ error: 'ID invalido.' });
+        }
 
-        await item.addMusicgenre(itemToAssign)
-        req.logbook("songmusicgenre.agregar", `${req.params.id}:${req.body.musicgenreid}`)
-        return res.status(204).send()
+        if (!musicgenreid || isNaN(musicgenreid) || !Number.isInteger(Number(musicgenreid))) {
+            return res.status(400).json({ error: 'ID invalido.' });
+        }
+
+        let itemToAssign = await musicgenre.findByPk(musicgenreid);
+        if (!itemToAssign) return res.status(404).send();
+
+        let item = await song.findByPk(id);
+        if (!item) return res.status(404).send();
+
+        await item.addMusicgenre(itemToAssign);
+        req.logbook("songmusicgenre.agregar", `${id}:${musicgenreid}`);
+        return res.status(204).send();
     } catch (error) {
-        return res.status(500).json(error)
+        return res.status(500).json(error);
     }
 }
 
-// DELETE: api/song/5/musicgenre/1
+// DELETE: api/song/:id/musicgenre/:musicgenreid
 self.deleteMusicgenre = async function (req, res) {
     try {
-        let itemToRemove = await musicgenre.findByPk(req.params.musicgenreid);
-        if (!itemToRemove) return res.status(404).send()
+        const { id, musicgenreid } = req.params;
+        if (!id || isNaN(id) || !Number.isInteger(Number(id)) || 
+            !musicgenreid || isNaN(musicgenreid) || !Number.isInteger(Number(musicgenreid))) {
+            return res.status(400).json({ error: 'Los IDs deben ser números enteros.' });
+        }
 
-        let item = await song.findByPk(req.params.id);
-        if (!item) return res.status(404).send()
+        let itemToRemove = await musicgenre.findByPk(musicgenreid);
+        if (!itemToRemove) return res.status(404).send();
 
-        await item.removeMusicgenre(itemToRemove)
-        req.logbook("songmusicgenre.remover", `${req.params.id}:${req.body.musicgenreid}`)
-        return res.status(204).send()
+        let item = await song.findByPk(id);
+        if (!item) return res.status(404).send();
+
+        await item.removeMusicgenre(itemToRemove);
+        req.logbook("songmusicgenre.remover", `${id}:${musicgenreid}`);
+        return res.status(204).send();
     } catch (error) {
-        return res.status(500).json(error)
+        return res.status(500).json(error);
     }
 }
 
